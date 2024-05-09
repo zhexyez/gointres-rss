@@ -144,6 +144,7 @@ func main() {
 	//
 	//var m  sync.Mutex
 
+	fmt.Println("Links count is:",len(newLinks.Links))
 	for i := range len(newLinks.Links) {
 		wg.Add(1)
 		go func(i int, wg *sync.WaitGroup) {
@@ -239,12 +240,13 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	// This is mess. Need better way to display.
 	for link, e := range newLinks.Mapping {
 		if e.NewInSection {
 			fmt.Print("\n=== SHOWING NEW FEED FROM ", newLinks.Names[link], " ===\n\n")
 			fmt.Print("Channel title ==> ", newLinks.Mapping[link].ChannelName, "\n\n")
 			for _, i := range newLinks.Mapping[link].Items {
-				fmt.Println("== <> == <> == <> == <> ==")
+				fmt.Println("<== == == == == == == == == == == == == == == == == == == == == ==>")
 				fmt.Println("Guid             ->", i.Guid)
 				fmt.Println("Title            ->", i.Title)
 				layout := "Mon, 02 Jan 2006 15:04:05 -0700"
@@ -261,11 +263,13 @@ func main() {
 				fmt.Println("Enclosure type   ->", i.Enclosure.Type)
 				fmt.Println("Enclosure length ->", i.Enclosure.Length)
 				fmt.Println("Enclosure URL    ->", i.Enclosure.URL)
-				fmt.Println("== <> == <> == <> == <> ==")
+				fmt.Println("<== == == == == == == == == == == == == == == == == == == == == ==>")
 			}
 		} else {
 			fmt.Println("\nNothing new from ", newLinks.Names[link])
 			fmt.Print("Channel title ==> ", newLinks.Mapping[link].ChannelName, "\n")
 		}
 	}
+	
+	fmt.Println("everything is OK. check for newly created file named", datafilename+jsonformat)
 }
