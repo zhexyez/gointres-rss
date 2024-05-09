@@ -14,40 +14,40 @@ import (
 )
 
 const (
-	EXISTS 		 = "exists"
-	ONDELETE	 = "ondelete"
-	PERMANENT	 = "permanent"
+	EXISTS    = "exists"
+	ONDELETE  = "ondelete"
+	PERMANENT = "permanent"
 )
 
 type LinkStruct struct {
-	Index 		int								`json:"-"`
-	Links 		[]string					`json:"Links"`
-	Names			[]string					`json:"Names"`
-	Objects   []*DelveXML				`json:"Objects"`
-	Mapping		map[int]*DelveXML `json:"-"`
+	Index   int               `json:"-"`
+	Links   []string          `json:"Links"`
+	Names   []string          `json:"Names"`
+	Objects []*DelveXML       `json:"Objects"`
+	Mapping map[int]*DelveXML `json:"-"`
 }
 
 type Enclosure struct {
-	URL 		string `xml:"url,attr"`
-	Length 	string `xml:"length,attr"`
-	Type 		string `xml:"type,attr"`
+	URL    string `xml:"url,attr"`
+	Length string `xml:"length,attr"`
+	Type   string `xml:"type,attr"`
 }
 
 type Item struct {
-	Title 				string 		`xml:"title"`
-	Link  				string 		`xml:"link"`
-	Description 	string 		`xml:"description"`
-	PubDate 			string 		`xml:"pubDate"`
-	PubDateF			time.Time
-	Enclosure			Enclosure `xml:"enclosure"`
-	Guid					string		`xml:"guid"`
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	Description string `xml:"description"`
+	PubDate     string `xml:"pubDate"`
+	PubDateF    time.Time
+	Enclosure   Enclosure `xml:"enclosure"`
+	Guid        string    `xml:"guid"`
 }
 
 type DelveXML struct {
-	CustomName  	string
-	NewInSection 	bool
-	ChannelName 	string `xml:"channel>title"`
-	Items 				[]Item `xml:"channel>item"`
+	CustomName   string
+	NewInSection bool
+	ChannelName  string `xml:"channel>title"`
+	Items        []Item `xml:"channel>item"`
 }
 
 func (l *LinkStruct) Push(name string, url string) error {
@@ -75,15 +75,14 @@ func main() {
 
 	guidfilename := "guids"
 	datafilename := "data"
-	jsonformat   := ".json"
+	jsonformat := ".json"
 
-	//timeFormat := time.Now().Format("2006-01-02T15:04:05Z07:00")
 	timeFormat := time.Now().Format("2006-01-02_15-04-05")
 	datafilename += "_" + timeFormat
 
-	guidlist, err := os.Open(guidfilename+jsonformat)
+	guidlist, err := os.Open(guidfilename + jsonformat)
 	if err != nil {
-		guidlist, err = os.Create(guidfilename+jsonformat)
+		guidlist, err = os.Create(guidfilename + jsonformat)
 		if err != nil {
 			log.Fatalln("unable to open and create a json guid list file: ", err)
 		}
@@ -96,21 +95,21 @@ func main() {
 	}
 
 	if len(glBytes) == 0 {
-		braces := []byte{'{','}'}
+		braces := []byte{'{', '}'}
 		glBytes = append(glBytes, braces...)
 	}
-	
+
 	var jsonReady map[string]string
-	
+
 	err = json.Unmarshal(glBytes, &jsonReady)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	newLinks := LinkStruct{
-		Index: 0, 
-		Links: []string{}, 
-		Names: []string{}, 
+		Index:   0,
+		Links:   []string{},
+		Names:   []string{},
 		Objects: []*DelveXML{},
 		Mapping: map[int]*DelveXML{},
 	}
@@ -136,8 +135,13 @@ func main() {
 	_ = newLinks.Push("Wired.com/Backchannel", "https://www.wired.com/feed/category/backchannel/latest/rss")
 	_ = newLinks.Push("Billboard.com/Billboard", "https://www.billboard.com/feed")
 
-
 	var wg sync.WaitGroup
+
+	// In the created goroutines usage of sync.Mutex is not completely clear.
+	// On the one hand, it will cause no data racing, because the order is not
+	// need to be preserved.
+	// On the other, who knows. I will test it later on.
+	//
 	//var m  sync.Mutex
 
 	for i := range len(newLinks.Links) {
@@ -167,6 +171,9 @@ func main() {
 
 			tmpSlice := []Item{}
 
+			// This is an ugly mess and I don't like it.
+			// I need to find a way to check either in parallel,
+			// or to rewrite it completely.
 			if len(jsonReady) > 0 {
 				for _, e := range parsed.Items {
 					if _, exist := jsonReady[e.Guid]; exist {
@@ -185,23 +192,28 @@ func main() {
 				}
 			}
 
+			// Personally, I think I need to rewrite it using
+			// pointers. Copying elements require memory and
+			// additional CPU cycles.
 			if len(tmpSlice) != len(parsed.Items) {
 				parsed.Items = tmpSlice
 			}
 
+			// We will proceed only if something new was parsed
 			if len(parsed.Items) > 0 {
 				//m.Lock()
 				newLinks.Objects = append(newLinks.Objects, &parsed)
 				newLinks.Mapping[i] = &parsed
 				//m.Unlock()
 			}
-			
+
 			wg.Done()
 		}(i, &wg)
 	}
 
 	wg.Wait()
-	
+
+	// We return if nothing new is found
 	if len(newLinks.Mapping) == 0 {
 		fmt.Println("No new feeds")
 		return
@@ -229,7 +241,7 @@ func main() {
 
 	for link, e := range newLinks.Mapping {
 		if e.NewInSection {
-			fmt.Print("\n=== SHOWING NEW FEED FROM ", newLinks.Names[link]," ===\n\n")
+			fmt.Print("\n=== SHOWING NEW FEED FROM ", newLinks.Names[link], " ===\n\n")
 			fmt.Print("Channel title ==> ", newLinks.Mapping[link].ChannelName, "\n\n")
 			for _, i := range newLinks.Mapping[link].Items {
 				fmt.Println("== <> == <> == <> == <> ==")
