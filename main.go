@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -9,14 +10,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
 
 const (
 	EXISTS    = "exists"
-	ONDELETE  = "ondelete"
-	PERMANENT = "permanent"
+	//ONDELETE  = "ondelete"
+	//PERMANENT = "permanent"
 )
 
 type LinkStruct struct {
@@ -44,9 +46,11 @@ type Item struct {
 }
 
 type DelveXML struct {
+	UpdatedAt		 int64
 	CustomName   string
 	NewInSection bool
 	ChannelName  string `xml:"channel>title"`
+	ChannelLang  string `xml:"channel>language"`
 	Items        []Item `xml:"channel>item"`
 }
 
@@ -71,14 +75,80 @@ func (l *LinkStruct) Push(name string, url string) error {
 	return nil
 }
 
+func UnixMilliToTime (unixmilli string, base int, bitSize int) (time.Time){
+	i, err := strconv.ParseInt(unixmilli, base, bitSize)
+	if err != nil {
+		log.Fatalln("could not parse time: ", err)
+	}
+	return time.UnixMilli(i)
+}
+
+func PrintNew(newLinks *LinkStruct) {
+	fmt.Println("\nThere are channels that got updated:")
+	for _, e := range newLinks.Mapping {
+		if e.NewInSection {
+			fmt.Print("\nCustom name: ", e.CustomName, ", title: ", e.ChannelName,", ")
+			fmt.Println(
+				"updated at:",
+				UnixMilliToTime(fmt.Sprint(e.UpdatedAt), 10, 64),
+			)
+		}
+	}
+}
+
+func PrintSelected(newLinks *LinkStruct) {
+	fmt.Print("\nEnter the custom name or title to select / q to stop selecting: ")
+	scanstdin := bufio.NewScanner(os.Stdin)
+	if scanstdin.Scan() {
+		input := scanstdin.Text()
+		found := false
+		if input != "q" {
+			for _, selected := range newLinks.Mapping {
+				if input == selected.CustomName || input == selected.ChannelName {
+					found = true
+					fmt.Print("Showing all new posts from ", selected.CustomName,"\n")
+					for _, newPost := range selected.Items {
+						fmt.Print("\n")
+						fmt.Println("Post title       ->", newPost.Title)
+						fmt.Println("Post link        ->", newPost.Link)
+						fmt.Println("Post description ->", newPost.Description)
+						layout := "Mon, 02 Jan 2006 15:04:05 -0700 GMT"
+						t, err := time.Parse(layout, newPost.PubDate)
+						if err != nil {
+							//fmt.Println("!!e!! => Error parsing date:", err)
+							fmt.Println("Publication date ->", newPost.PubDate)
+						} else {
+							newPost.PubDateF = t
+							fmt.Println("Publication date ->", newPost.PubDateF)
+						}
+						if newPost.Enclosure.URL != "" {
+							fmt.Println("Enclosure type   ->", newPost.Enclosure.Type)
+							fmt.Println("Enclosure length ->", newPost.Enclosure.Length)
+							fmt.Println("Enclosure URL    ->", newPost.Enclosure.URL)
+						}
+					}
+				}
+			}
+			if !found {
+				fmt.Print("Nothing new found. Check spelling or return later")
+			}
+			PrintSelected(newLinks)
+		} else {
+			return
+		}
+	} else {
+		fmt.Println("some error when reading user input")
+	}
+}
+
 func main() {
 
 	guidfilename := "guids"
 	datafilename := "data"
 	jsonformat := ".json"
 
-	timeFormat := time.Now().Format("2006-01-02_15-04-05")
-	datafilename += "_" + timeFormat
+	timeFormat := time.Now().UnixMicro()
+	datafilename += "_" + fmt.Sprint(timeFormat)
 
 	guidlist, err := os.Open(guidfilename + jsonformat)
 	if err != nil {
@@ -203,6 +273,8 @@ func main() {
 			// We will proceed only if something new was parsed
 			if len(parsed.Items) > 0 {
 				//m.Lock()
+				parsed.UpdatedAt = time.Now().UnixMilli()
+				parsed.CustomName = newLinks.Names[i]
 				newLinks.Objects = append(newLinks.Objects, &parsed)
 				newLinks.Mapping[i] = &parsed
 				//m.Unlock()
@@ -240,36 +312,8 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	// This is mess. Need better way to display.
-	for link, e := range newLinks.Mapping {
-		if e.NewInSection {
-			fmt.Print("\n=== SHOWING NEW FEED FROM ", newLinks.Names[link], " ===\n\n")
-			fmt.Print("Channel title ==> ", newLinks.Mapping[link].ChannelName, "\n\n")
-			for _, i := range newLinks.Mapping[link].Items {
-				fmt.Println("<== == == == == == == == == == == == == == == == == == == == == ==>")
-				fmt.Println("Guid             ->", i.Guid)
-				fmt.Println("Title            ->", i.Title)
-				layout := "Mon, 02 Jan 2006 15:04:05 -0700"
-				t, err := time.Parse(layout, i.PubDate)
-				if err != nil {
-					//fmt.Println("!!e!! => Error parsing date:", err)
-					fmt.Println("Publication date ->", i.PubDate)
-				} else {
-					i.PubDateF = t
-					fmt.Println("Publication date ->", i.PubDateF)
-				}
-				fmt.Println("Description      ->", i.Description)
-				fmt.Println("Full link        ->", i.Link)
-				fmt.Println("Enclosure type   ->", i.Enclosure.Type)
-				fmt.Println("Enclosure length ->", i.Enclosure.Length)
-				fmt.Println("Enclosure URL    ->", i.Enclosure.URL)
-				fmt.Println("<== == == == == == == == == == == == == == == == == == == == == ==>")
-			}
-		} else {
-			fmt.Println("\nNothing new from ", newLinks.Names[link])
-			fmt.Print("Channel title ==> ", newLinks.Mapping[link].ChannelName, "\n")
-		}
-	}
-	
-	fmt.Println("everything is OK. check for newly created file named", datafilename+jsonformat)
+	// User interaction part
+	PrintNew(&newLinks)
+	fmt.Println("\nEverything is OK. check for newly created file named", datafilename+jsonformat)
+	PrintSelected(&newLinks)
 }
