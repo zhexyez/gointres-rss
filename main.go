@@ -1,5 +1,8 @@
 package main
 
+// Global TODO: change saved PubDateF to be Unix.Milli
+// Global TODO: sanitize HTML from description (?)
+
 import (
 	"bufio"
 	"encoding/json"
@@ -140,6 +143,50 @@ func PrintSelected(newLinks *LinkStruct) {
 		fmt.Println("some error when reading user input")
 	}
 }
+
+func (l *LinkStruct) GetAllNew() (out []*DelveXML, err error) {
+	if len(l.Mapping) == 0 {
+		return nil, errors.New("structure of links is empty")
+	}
+	for _, e := range l.Mapping {
+		if e.NewInSection {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func (l *LinkStruct) GetNewSelected(vendor string) (out *[]Item, err error) {
+	if len(l.Mapping) == 0 {
+		return nil, errors.New("structure of links is empty")
+	}
+	for _, selected := range l.Mapping {
+		if vendor == selected.CustomName || vendor == selected.ChannelName {
+			if len(selected.Items) == 0 {
+				return nil, errors.New("no items in selected vendor")
+			}
+			return &selected.Items, nil
+		}
+	}
+	return nil, errors.New("selected vendor is not found")
+}
+
+func (l *LinkStruct) GetVendorByIndex(vendor_index int) (out *DelveXML, err error) {
+	if len(l.Mapping) == 0 {
+		return nil, errors.New("structure of links is empty")
+	}
+	if vendor_index <= 0 {
+		return nil, errors.New("index cannot be less or equal to zero")
+	}
+	found, exist := l.Mapping[vendor_index]
+	if exist {
+		return found, nil
+	}
+	return nil, errors.New("vendor with such index does not exist")
+}
+
+//todo
+//func (l *LinkStruct) GetNewSelectedItem(vendor string, ..?) (out *Item, err error)
 
 func main() {
 
@@ -316,4 +363,32 @@ func main() {
 	PrintNew(&newLinks)
 	fmt.Println("\nEverything is OK. check for newly created file named", datafilename+jsonformat)
 	PrintSelected(&newLinks)
+	
+	// Examples of usage
+	
+	/*
+	allnew, err := newLinks.GetAllNew()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println(allnew[0].ChannelName)
+
+	selectednew, err := newLinks.GetNewSelected("Wired.com/AI")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println((*selectednew)[0].Title)
+
+	byIndex, err := newLinks.GetVendorByIndex(1)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println(byIndex.CustomName)
+
+	byIndex, err = newLinks.GetVendorByIndex(2)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println(byIndex.CustomName)
+	*/
 }
