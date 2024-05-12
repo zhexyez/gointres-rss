@@ -2,6 +2,8 @@ package main
 
 // Global TODO: change saved PubDateF to be Unix.Milli
 // Global TODO: sanitize HTML from description (?)
+// 					OK: make errors globally avialable
+// Global TODO: save entries to local SQLite database (?)
 
 import (
 	"bufio"
@@ -13,6 +15,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -24,12 +28,30 @@ const (
 	//PERMANENT = "permanent"
 )
 
+const (
+	ERR_UnreachableVendorIndex = iota
+	ERR_UnreachableItemIndex
+	ERR_EmptyGlobalStruct
+	ERR_EmptyVendorStruct
+	ERR_VendorNil
+	ERR_EmptyURL
+)
+
+var Errors []error = []error{
+	errors.New("unreachable vendor index"),
+	errors.New("unreachable item index"),
+	errors.New("empty global struct"),
+	errors.New("empty vendor struct"),
+	errors.New("vendor cannot be nil"),
+	errors.New("URL cannot be empty"),
+}
+
 type LinkStruct struct {
 	Index   int               `json:"-"`
 	Links   []string          `json:"Links"`
 	Names   []string          `json:"Names"`
-	Objects []*DelveXML       `json:"Objects"`
-	Mapping map[int]*DelveXML `json:"-"`
+	Objects []*Vendor       `json:"Objects"`
+	Mapping map[int]*Vendor `json:"-"`
 }
 
 type Enclosure struct {
@@ -48,7 +70,7 @@ type Item struct {
 	Guid        string    `xml:"guid"`
 }
 
-type DelveXML struct {
+type Vendor struct {
 	UpdatedAt		 int64
 	CustomName   string
 	NewInSection bool
@@ -59,7 +81,7 @@ type DelveXML struct {
 
 func (l *LinkStruct) Push(name string, url string) error {
 	if len(url) == 0 {
-		return errors.New("url cannot be empty")
+		return Errors[ERR_EmptyURL]
 	}
 	if len(l.Links) != 0 {
 		for _, link := range l.Links {
@@ -86,9 +108,32 @@ func UnixMilliToTime (unixmilli string, base int, bitSize int) (time.Time){
 	return time.UnixMilli(i)
 }
 
-func PrintNew(newLinks *LinkStruct) {
-	fmt.Println("\nThere are channels that got updated:")
-	for _, e := range newLinks.Mapping {
+func scrclear () {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/c", "cls")
+	} else {
+		cmd = exec.Command("clear")
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}
+
+func (l *LinkStruct) global_empty() bool {
+	return len(l.Mapping) == 0
+}
+
+func (l *LinkStruct) vendor_empty(v *Vendor) bool {
+	return len(v.Items) == 0
+}
+
+func (l *LinkStruct) print_new() {
+	if l.global_empty() {
+		fmt.Println(Errors[ERR_EmptyGlobalStruct])
+		return
+	}
+	fmt.Println("There are channels that got updated:")
+	for _, e := range l.Mapping {
 		if e.NewInSection {
 			fmt.Print("\nCustom name: ", e.CustomName, ", title: ", e.ChannelName,", ")
 			fmt.Println(
@@ -99,54 +144,67 @@ func PrintNew(newLinks *LinkStruct) {
 	}
 }
 
-func PrintSelected(newLinks *LinkStruct) {
-	fmt.Print("\nEnter the custom name or title to select / q to stop selecting: ")
-	scanstdin := bufio.NewScanner(os.Stdin)
-	if scanstdin.Scan() {
-		input := scanstdin.Text()
-		found := false
-		if input != "q" {
-			for _, selected := range newLinks.Mapping {
-				if input == selected.CustomName || input == selected.ChannelName {
-					found = true
-					fmt.Print("Showing all new posts from ", selected.CustomName,"\n")
-					for _, newPost := range selected.Items {
-						fmt.Print("\n")
-						fmt.Println("Post title       ->", newPost.Title)
-						fmt.Println("Post link        ->", newPost.Link)
-						fmt.Println("Post description ->", newPost.Description)
-						layout := "Mon, 02 Jan 2006 15:04:05 -0700 GMT"
-						t, err := time.Parse(layout, newPost.PubDate)
-						if err != nil {
-							//fmt.Println("!!e!! => Error parsing date:", err)
-							fmt.Println("Publication date ->", newPost.PubDate)
-						} else {
-							newPost.PubDateF = t
-							fmt.Println("Publication date ->", newPost.PubDateF)
-						}
-						if newPost.Enclosure.URL != "" {
-							fmt.Println("Enclosure type   ->", newPost.Enclosure.Type)
-							fmt.Println("Enclosure length ->", newPost.Enclosure.Length)
-							fmt.Println("Enclosure URL    ->", newPost.Enclosure.URL)
-						}
-					}
-				}
-			}
-			if !found {
-				fmt.Print("Nothing new found. Check spelling or return later")
-			}
-			PrintSelected(newLinks)
+func (l *LinkStruct) print_all_in_vendor(vendor string) {
+	selected, err := l.GetVendorByName(vendor)
+	if err == Errors[ERR_UnreachableVendorIndex] {
+		fmt.Println("The vendor with name", vendor, "does not exist")
+		return
+	} else if err == Errors[ERR_EmptyVendorStruct] {
+		fmt.Println("The vendor with name", vendor, "got no updates")
+		return
+	} else if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Print("Showing all new posts from ", selected.CustomName,"\n")
+	for index, newPost := range selected.Items {
+		fmt.Print("\n")
+		fmt.Println("Post number", index+1)
+		fmt.Println("Post title       ->", newPost.Title)
+		fmt.Println("Post link        ->", newPost.Link)
+		fmt.Println("Post description ->", newPost.Description)
+		layout := "Mon, 02 Jan 2006 15:04:05 -0700 GMT"
+		t, err := time.Parse(layout, newPost.PubDate)
+		if err != nil {
+			//fmt.Println("!!e!! => Error parsing date:", err)
+			fmt.Println("Publication date ->", newPost.PubDate)
 		} else {
-			return
+			newPost.PubDateF = t
+			fmt.Println("Publication date ->", newPost.PubDateF)
 		}
-	} else {
-		fmt.Println("some error when reading user input")
+		if newPost.Enclosure.URL != "" {
+			fmt.Println("Enclosure type   ->", newPost.Enclosure.Type)
+			fmt.Println("Enclosure length ->", newPost.Enclosure.Length)
+			fmt.Println("Enclosure URL    ->", newPost.Enclosure.URL)
+		}
 	}
 }
 
-func (l *LinkStruct) GetAllNew() (out []*DelveXML, err error) {
-	if len(l.Mapping) == 0 {
-		return nil, errors.New("structure of links is empty")
+func (l *LinkStruct) PrintDialogue() {
+	for {
+		fmt.Print("\nEnter the custom name to view posts / l to list updated vendors / c to clear screen / q to quit: ")
+		scanstdin := bufio.NewScanner(os.Stdin)
+		if scanstdin.Scan() {
+			input := scanstdin.Text()
+			if input == "q" {
+				return
+			}
+			if input == "l" {
+				l.print_new()
+				continue
+			}
+			if input == "c" {
+				scrclear()
+				continue
+			}
+			l.print_all_in_vendor(input)
+		}
+	}
+}
+
+func (l *LinkStruct) GetAllNew() (out []*Vendor, err error) {
+	if l.global_empty() {
+		return nil, Errors[ERR_EmptyGlobalStruct]
 	}
 	for _, e := range l.Mapping {
 		if e.NewInSection {
@@ -156,37 +214,44 @@ func (l *LinkStruct) GetAllNew() (out []*DelveXML, err error) {
 	return out, nil
 }
 
-func (l *LinkStruct) GetNewSelected(vendor string) (out *[]Item, err error) {
-	if len(l.Mapping) == 0 {
-		return nil, errors.New("structure of links is empty")
+func (l *LinkStruct) GetVendorByName(vendor string) (out *Vendor, err error) {
+	if l.global_empty() {
+		return nil, Errors[ERR_EmptyGlobalStruct]
 	}
 	for _, selected := range l.Mapping {
 		if vendor == selected.CustomName || vendor == selected.ChannelName {
-			if len(selected.Items) == 0 {
-				return nil, errors.New("no items in selected vendor")
+			if l.vendor_empty(selected) {
+				return nil, Errors[ERR_EmptyVendorStruct]
 			}
-			return &selected.Items, nil
+			return selected, nil
 		}
 	}
-	return nil, errors.New("selected vendor is not found")
+	return nil, Errors[ERR_UnreachableVendorIndex]
 }
 
-func (l *LinkStruct) GetVendorByIndex(vendor_index int) (out *DelveXML, err error) {
-	if len(l.Mapping) == 0 {
-		return nil, errors.New("structure of links is empty")
+func (l *LinkStruct) GetVendorByIndex(vendor_index int) (out *Vendor, err error) {
+	if l.global_empty() {
+		return nil, Errors[ERR_EmptyGlobalStruct]
 	}
 	if vendor_index <= 0 {
-		return nil, errors.New("index cannot be less or equal to zero")
+		return nil, Errors[ERR_UnreachableVendorIndex]
 	}
 	found, exist := l.Mapping[vendor_index]
 	if exist {
 		return found, nil
 	}
-	return nil, errors.New("vendor with such index does not exist")
+	return nil, Errors[ERR_UnreachableVendorIndex]
 }
 
-//todo
-//func (l *LinkStruct) GetNewSelectedItem(vendor string, ..?) (out *Item, err error)
+func (l *LinkStruct) GetNewSelectedItem(vendor *Vendor, item_index int) (out *Item, err error) {
+	if vendor == nil {
+		return nil, Errors[ERR_VendorNil]
+	}
+	if item_index > len(vendor.Items) || item_index < 0 {
+		return nil, Errors[ERR_UnreachableItemIndex]
+	}
+	return &vendor.Items[item_index], nil
+}
 
 func main() {
 
@@ -204,12 +269,13 @@ func main() {
 			log.Fatalln("unable to open and create a json guid list file: ", err)
 		}
 	}
-	defer guidlist.Close()
 
 	glBytes, err := io.ReadAll(guidlist)
 	if err != nil {
 		log.Fatalln(err)
 	}
+
+	guidlist.Close()
 
 	if len(glBytes) == 0 {
 		braces := []byte{'{', '}'}
@@ -227,10 +293,11 @@ func main() {
 		Index:   0,
 		Links:   []string{},
 		Names:   []string{},
-		Objects: []*DelveXML{},
-		Mapping: map[int]*DelveXML{},
+		Objects: []*Vendor{},
+		Mapping: map[int]*Vendor{},
 	}
 
+	// will be in API
 	_ = newLinks.Push("Megaphone.fm/New Heights with Jason and Travis Kelce", "https://feeds.megaphone.fm/newheights")
 	_ = newLinks.Push("NBCnews.com/Murder in Apartment 12", "https://podcastfeeds.nbcnews.com/RPWEjhKq")
 	_ = newLinks.Push("Art19.com/Exposed: Cover-Up at Columbia University", "https://rss.art19.com/-exposed-")
@@ -261,7 +328,11 @@ func main() {
 	//
 	//var m  sync.Mutex
 
-	fmt.Println("Links count is:",len(newLinks.Links))
+	if len(newLinks.Links) == 0 {
+		fmt.Println("To start, add some links. Usage: LinkStruct.Push(name string, url string)")
+		return
+	}
+	performance_test_start := time.Now()
 	for i := range len(newLinks.Links) {
 		wg.Add(1)
 		go func(i int, wg *sync.WaitGroup) {
@@ -279,7 +350,7 @@ func main() {
 				log.Fatalln(err)
 			}
 
-			var parsed DelveXML
+			var parsed Vendor
 			err = xml.Unmarshal(body, &parsed)
 			if err != nil {
 				log.Fatalln(err)
@@ -332,10 +403,11 @@ func main() {
 	}
 
 	wg.Wait()
+	fmt.Println("\nGetting and parsing xml took", time.Since(performance_test_start))
 
 	// We return if nothing new is found
 	if len(newLinks.Mapping) == 0 {
-		fmt.Println("No new feeds")
+		fmt.Println("\nChecked", len(newLinks.Links), "links. Updated", len(newLinks.Mapping), "of them. No new feeds.")
 		return
 	}
 
@@ -360,35 +432,7 @@ func main() {
 	}
 
 	// User interaction part
-	PrintNew(&newLinks)
-	fmt.Println("\nEverything is OK. check for newly created file named", datafilename+jsonformat)
-	PrintSelected(&newLinks)
-	
-	// Examples of usage
-	
-	/*
-	allnew, err := newLinks.GetAllNew()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Println(allnew[0].ChannelName)
-
-	selectednew, err := newLinks.GetNewSelected("Wired.com/AI")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Println((*selectednew)[0].Title)
-
-	byIndex, err := newLinks.GetVendorByIndex(1)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Println(byIndex.CustomName)
-
-	byIndex, err = newLinks.GetVendorByIndex(2)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	fmt.Println(byIndex.CustomName)
-	*/
+	fmt.Println("\nChecked", len(newLinks.Links), "links. Updated", len(newLinks.Mapping), "of them.")
+	fmt.Println("\nCheck for newly created file named", datafilename+jsonformat)
+	newLinks.PrintDialogue()
 }
