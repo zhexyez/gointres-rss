@@ -10,15 +10,13 @@
 5. Type ```go run main.go```
 
 ### Output
-A lot of text should appear in the console first time you run the program. That's OK.<br/>
-Try to run it again immediately - and after links you well see `No new feeds`. That's an intended behavior.<br/>
-In the folder you will see 2 newly created files:
-- guids.json
-- another JSON file with prefix data_
+User interface will guide you through the process.
 
 **guids.json** stores all parsed guid values from guid tags on XML recieved via Get request. Next time you run the program, after parsing step, it will check all **guids** against **newly parsed XML** and creates new **data_** file with only items that are new.<br/>
 
-> *Eventually, I will add support for sqlite3 database to drop the usage of JSON*
+> ~~*Eventually, I will add support for SQLite3 database to drop the usage of JSON*~~
+
+> *Eventually, I will add support to clean old entries*
 
 **data_** file contains **date** and **time** in the filename. The timestamp is the program start time.<br/>
 
