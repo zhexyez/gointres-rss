@@ -181,11 +181,32 @@ func (l *LinkStruct) print_all_in_vendor(vendor string) {
 }
 
 func (l *LinkStruct) PrintDialogue() {
+	textselect := ""
+	indexselect := 1
 	for {
-		fmt.Print("\nEnter the custom name to view posts / l to list updated vendors / c to clear screen / q to quit: ")
+		current, err := l.GetVendorByIndex(indexselect)
+		if err != nil {
+			if indexselect < 2 {
+				indexselect = 1
+			} else {
+				indexselect -= 1
+				textselect = current.CustomName
+			}
+		} else {
+			textselect = current.CustomName
+		}
+		fmt.Print("\n[Selected vendor  is ", textselect,"]: s to show / n to next / p to previous / l to list all / c to clear screen / q to quit: ")
 		scanstdin := bufio.NewScanner(os.Stdin)
 		if scanstdin.Scan() {
 			input := scanstdin.Text()
+			if input == "n" {
+				indexselect += 1
+				continue
+			}
+			if input == "p" {
+				indexselect -= 1
+				continue
+			}
 			if input == "q" {
 				return
 			}
@@ -197,7 +218,9 @@ func (l *LinkStruct) PrintDialogue() {
 				scrclear()
 				continue
 			}
-			l.print_all_in_vendor(input)
+			if input == "s" {
+				l.print_all_in_vendor(textselect)
+			}
 		}
 	}
 }
